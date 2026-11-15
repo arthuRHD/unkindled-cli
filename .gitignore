@@ -1,0 +1,5 @@
+/bin/
+/unkindled
+*.test
+coverage.out
+.DS_Store
