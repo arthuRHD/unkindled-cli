@@ -4,7 +4,7 @@ GO ?= go
 .PHONY: build test fmt vet clean
 
 build:
-	$(GO) build -trimpath -o bin/$(BINARY) .
+	$(GO) build -trimpath -o bin/$(BINARY) ./cmd/unkindled
 
 test:
 	$(GO) test ./...
