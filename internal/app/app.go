@@ -24,7 +24,7 @@ import (
 )
 
 // Version is the CLI version.
-const Version = "0.1.1"
+const Version = "1.2.0"
 
 // App holds the CLI's dependencies so commands can be tested end to end.
 type App struct {

@@ -10,7 +10,7 @@ control plane, and registers your workstations with
 Requires Go 1.22 or newer.
 
 ```sh
-go install github.com/arthuRHD/unkindled-cli/cmd/unkindled@v0.1.1
+go install github.com/arthuRHD/unkindled-cli/cmd/unkindled@v1.2.0
 ```
 
 Or build from a checkout:
