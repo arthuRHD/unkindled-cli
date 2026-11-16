@@ -13,6 +13,7 @@ import (
 
 type statusSSH struct {
 	BlockPresent bool   `json:"block_present"`
+	Unmanaged    bool   `json:"unmanaged,omitempty"`
 	Alias        string `json:"alias,omitempty"`
 	AliasOK      bool   `json:"alias_ok"`
 	IdentityFile string `json:"identity_file,omitempty"`
@@ -118,6 +119,7 @@ Options:
 		Missing:      []statusMissing{},
 	}
 	connectionIssues := 0
+	home, _ := a.homeDir()
 
 	for _, plan := range plans {
 		ws := plan.Workstation
@@ -151,20 +153,47 @@ Options:
 			switch {
 			case findErr != nil:
 				issues = append(issues, "cannot read managed SSH block: "+findErr.Error())
-			case !found:
-				issues = append(issues, "SSH config block missing")
-			default:
+			case found:
 				row.SSH.BlockPresent = true
 				row.SSH.Alias = block.Alias
 				row.SSH.IdentityFile = block.IdentityFile
 				row.SSH.AliasOK = block.Alias == plan.Alias
-				row.SSH.IdentityOK = cleanPathEqual(block.IdentityFile, plan.KeyPath)
+				row.SSH.IdentityOK = cleanPathEqual(expandHome(block.IdentityFile, home), plan.KeyPath)
 				row.SSH.OK = row.SSH.AliasOK && row.SSH.IdentityOK
 				if !row.SSH.AliasOK {
 					issues = append(issues, fmt.Sprintf("SSH alias is %q (expected %q)", block.Alias, plan.Alias))
 				}
 				if !row.SSH.IdentityOK {
 					issues = append(issues, fmt.Sprintf("SSH identity file is %q (expected %q)", block.IdentityFile, plan.KeyPath))
+				}
+			default:
+				// An equivalent hand-written block (same Host alias, host, user, port,
+				// identity file) is already a working setup. Detect it instead of
+				// reporting it missing and adding a duplicate Host entry.
+				host, hostFound, hostErr := sshconf.FindHost(sshConfig, plan.Alias)
+				if hostErr != nil {
+					issues = append(issues, "cannot read SSH host block: "+hostErr.Error())
+					break
+				}
+				if !hostFound {
+					issues = append(issues, "SSH config block missing")
+					break
+				}
+				row.SSH.BlockPresent = true
+				row.SSH.Unmanaged = true
+				row.SSH.Alias = plan.Alias
+				row.SSH.IdentityFile = host.IdentityFile
+				addressOK := strings.EqualFold(host.HostName, plan.Connection.Address()) &&
+					host.User == plan.Connection.LoginUser() &&
+					(host.Port == 0 || host.Port == plan.Connection.PortNumber())
+				row.SSH.AliasOK = addressOK
+				row.SSH.IdentityOK = cleanPathEqual(expandHome(host.IdentityFile, home), plan.KeyPath)
+				row.SSH.OK = addressOK && row.SSH.IdentityOK
+				if !addressOK {
+					issues = append(issues, fmt.Sprintf("SSH Host %q has a different HostName, User or Port (expected %s@%s:%d)", plan.Alias, plan.Connection.LoginUser(), plan.Connection.Address(), plan.Connection.PortNumber()))
+				}
+				if !row.SSH.IdentityOK {
+					issues = append(issues, fmt.Sprintf("SSH identity file is %q (expected %q)", host.IdentityFile, plan.KeyPath))
 				}
 			}
 			if !row.SSH.BlockPresent {

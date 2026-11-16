@@ -25,6 +25,7 @@ type sshSyncItem struct {
 	Plan       workstationPlan
 	KeyAction  sshKeyAction
 	ConfigDiff bool
+	Existing   bool
 }
 
 func (a *App) runSSHSync(ctx context.Context, args []string) int {
@@ -65,6 +66,7 @@ Options:
 	if err != nil {
 		return a.fail("%v", err)
 	}
+	home, _ := a.homeDir()
 	plans := a.buildPlans(ctx, client, list)
 
 	var items []sshSyncItem
@@ -107,6 +109,28 @@ Options:
 			a.warn("skipping %s: identity file %s does not exist", label, plan.KeyPath)
 			hadErrors = true
 			continue
+		}
+
+		// A hand-written Host block with the same alias is a working setup. Never append
+		// a duplicate Host entry with the same alias; SSH would silently use the first one.
+		if _, managed, _ := sshconf.Find(newContent, plan.Workstation.ID); !managed {
+			if hostBlock, hostFound, hostErr := sshconf.FindHost(newContent, plan.Alias); hostErr != nil {
+				a.warn("skipping %s: cannot read SSH host block: %v", label, hostErr)
+				hadErrors = true
+				continue
+			} else if hostFound {
+				addressOK := strings.EqualFold(hostBlock.HostName, host) &&
+					hostBlock.User == conn.LoginUser() &&
+					(hostBlock.Port == 0 || hostBlock.Port == conn.PortNumber())
+				identityOK := cleanPathEqual(expandHome(hostBlock.IdentityFile, home), plan.KeyPath)
+				if addressOK && identityOK {
+					items = append(items, sshSyncItem{Plan: plan, KeyAction: action, Existing: true})
+					continue
+				}
+				a.warn("skipping %s: SSH Host %q already exists with different settings; remove or rename that block first", label, plan.Alias)
+				hadErrors = true
+				continue
+			}
 		}
 
 		block := sshconf.Block{
@@ -252,6 +276,8 @@ func (a *App) renderSSHChanges(items []sshSyncItem, diffText string) {
 		}
 		if item.ConfigDiff {
 			a.info("  - %s: update SSH config block (Host %s)", label, item.Plan.Alias)
+		} else if item.Existing {
+			a.info("  - %s: equivalent SSH config block already exists (Host %s); leaving it unchanged", label, item.Plan.Alias)
 		}
 	}
 	if diffText != "" {

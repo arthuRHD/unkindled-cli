@@ -283,3 +283,64 @@ func TestSSHSyncUsesExternalIdentityFile(t *testing.T) {
 		t.Fatalf("managed key path used for external key:\n%s", text)
 	}
 }
+
+func TestSSHSyncRecognizesEquivalentUnmanagedBlock(t *testing.T) {
+	revealCalls := 0
+	env, _, _ := sshSyncFixture(t, &revealCalls)
+	keyPath := env.keyPath("dev-box")
+	env.writeFile(keyPath, []byte(testPrivateKey), 0o600)
+	original := "Host unkindled-dev-box\n" +
+		"  HostName 203.0.113.9\n" +
+		"  User ubuntu\n" +
+		"  IdentityFile " + keyPath + "\n" +
+		"  IdentitiesOnly yes\n"
+	env.writeFile(env.sshConfigPath(), []byte(original), 0o600)
+
+	code, stdout, stderr := env.run("status")
+	if code != 0 {
+		t.Fatalf("status exit = %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "All workstations are configured locally.") {
+		t.Fatalf("equivalent unmanaged block not detected:\n%s", stdout)
+	}
+	if revealCalls != 0 {
+		t.Fatalf("status revealed a key")
+	}
+
+	code, stdout, stderr = env.run("ssh", "sync", "--dry-run")
+	if code != 0 {
+		t.Fatalf("sync exit = %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "already up to date") {
+		t.Fatalf("unmanaged equivalent block was not treated as configured:\n%s", stdout)
+	}
+	if after := env.readFile(env.sshConfigPath()); after != original {
+		t.Fatalf("sync changed the unmanaged block:\n%s", after)
+	}
+}
+
+func TestSSHSyncUsesServerIdentityPath(t *testing.T) {
+	revealCalls := 0
+	env := newTestEnv(t)
+	ws := api.Workstation{ID: "ws-1", Name: "dev box", State: "running", Plan: "pro", IPv4: "203.0.113.9"}
+	conn := api.Connection{
+		WorkstationID: "ws-1", IPv4: "203.0.113.9", User: "ubuntu",
+		SSHHostAlias: "unkindled-dev-box", PlatformGeneratedKey: true,
+		IdentityFile: "~/.ssh/unkindled-dev-box",
+	}
+	server := newControlPlane(t, []api.Workstation{ws}, map[string]api.Connection{"ws-1": conn}, testPrivateKey, &revealCalls)
+	env.saveConfig(server.URL, "test-token")
+	keyPath := filepath.Join(env.home, ".ssh", "unkindled-dev-box")
+	env.writeFile(keyPath, []byte(testPrivateKey), 0o600)
+
+	code, stdout, stderr := env.run("ssh", "sync", "--dry-run")
+	if code != 0 {
+		t.Fatalf("sync exit = %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	if revealCalls != 0 {
+		t.Fatalf("existing server-side identity path was not detected; reveal calls = %d", revealCalls)
+	}
+	if strings.Contains(stdout, "write platform-generated private key") {
+		t.Fatalf("planned a second key instead of using the server identity path:\n%s", stdout)
+	}
+}

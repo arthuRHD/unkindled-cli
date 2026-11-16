@@ -185,6 +185,96 @@ func Find(content, id string) (ManagedBlock, bool, error) {
 	return block, true, nil
 }
 
+// HostBlock is an unmanaged Host entry parsed from an SSH config. It is used to
+// recognise an equivalent block that was written by hand or by an earlier tool.
+type HostBlock struct {
+	Patterns       []string
+	HostName       string
+	User           string
+	Port           int
+	IdentityFile   string
+	IdentitiesOnly bool
+}
+
+// FindHost returns the first Host block whose pattern exactly matches alias. Wildcard
+// patterns are deliberately not matched: an existing Host * block is not an equivalent
+// workstation entry. Managed blocks are returned too; callers that need to distinguish
+// them should call Find first.
+func FindHost(content, alias string) (HostBlock, bool, error) {
+	alias = strings.TrimSpace(alias)
+	if alias == "" {
+		return HostBlock{}, false, errors.New("SSH alias is empty")
+	}
+	if strings.ContainsAny(alias, " \t\r\n*?!,#\"'") {
+		return HostBlock{}, false, fmt.Errorf("invalid SSH alias %q", alias)
+	}
+	lines := splitLines(normalizeEOL(content))
+	var current *HostBlock
+	var match *HostBlock
+	flush := func() {
+		if current == nil || match != nil {
+			return
+		}
+		for _, pattern := range current.Patterns {
+			if pattern == alias {
+				copy := *current
+				match = &copy
+				return
+			}
+		}
+	}
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		fields := strings.Fields(trimmed)
+		if len(fields) == 0 {
+			continue
+		}
+		key := strings.ToLower(fields[0])
+		if key == "host" {
+			flush()
+			current = &HostBlock{Patterns: append([]string(nil), fields[1:]...)}
+			continue
+		}
+		if key == "match" {
+			flush()
+			current = nil
+			continue
+		}
+		if current == nil {
+			continue
+		}
+		value := strings.TrimSpace(strings.TrimPrefix(trimmed, fields[0]))
+		if i := strings.Index(value, " #"); i >= 0 {
+			value = strings.TrimSpace(value[:i])
+		}
+		value = strings.Trim(value, "\"")
+		switch key {
+		case "hostname":
+			current.HostName = value
+		case "user":
+			current.User = value
+		case "identityfile":
+			if current.IdentityFile == "" {
+				current.IdentityFile = value
+			}
+		case "port":
+			if port, err := strconv.Atoi(value); err == nil {
+				current.Port = port
+			}
+		case "identitiesonly":
+			current.IdentitiesOnly = strings.EqualFold(value, "yes")
+		}
+	}
+	flush()
+	if match == nil {
+		return HostBlock{}, false, nil
+	}
+	return *match, true, nil
+}
+
 // IDs returns all well-formed opening marker IDs, in file order.
 func IDs(content string) []string {
 	var ids []string

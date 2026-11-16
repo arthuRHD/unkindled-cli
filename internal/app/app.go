@@ -24,7 +24,7 @@ import (
 )
 
 // Version is the CLI version.
-const Version = "0.1.0"
+const Version = "0.1.1"
 
 // App holds the CLI's dependencies so commands can be tested end to end.
 type App struct {
@@ -363,9 +363,10 @@ func (a *App) buildPlans(ctx context.Context, client *api.Client, list []api.Wor
 
 		if plan.Err == nil {
 			if home, err := a.homeDir(); err == nil {
-				if plan.PlatformKey {
-					plan.KeyPath = filepath.Join(keyDir, plan.Slug)
-				} else if preferred := plan.Connection.PreferredKeyPath(); preferred != "" {
+				// The API's identity_file is authoritative. This matters for an existing
+				// platform-generated key that was imported under its original path: the
+				// CLI must detect it instead of planning a second key under .ssh/unkindled.
+				if preferred := plan.Connection.PreferredKeyPath(); preferred != "" {
 					preferred = expandHome(preferred, home)
 					if !filepath.IsAbs(preferred) {
 						preferred = filepath.Join(home, preferred)

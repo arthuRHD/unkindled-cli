@@ -69,7 +69,8 @@ unkindled status --json
 Status lists each workstation's name, state, plan, and IPv4 address, and checks
 the local setup:
 
-- a managed `# unkindled:<id>` block exists in `~/.ssh/config`
+- a managed `# unkindled:<id>` block exists in `~/.ssh/config`, or an equivalent
+  hand-written `Host` block matches the API alias, host, user and identity file
 - the block's host alias and identity file match the API connection details
 - the private key exists and is mode `0600` when the platform generated it
 - `herdr machine list --json` contains the workstation
@@ -105,8 +106,15 @@ Host <alias>
 ```
 
 A non-default SSH port is written as a `Port` line before `IdentityFile`.
-Unrelated hosts, comments, and ordering are preserved. Running the command
-again is idempotent; existing keys are reused without another reveal call.
+Unrelated hosts, comments, and ordering are preserved. The identity path
+returned by the API is authoritative, so an existing platform-generated key is
+reused even when it is not under `~/.ssh/unkindled/`.
+
+If an equivalent hand-written `Host` block already exists, `ssh sync` leaves it
+unchanged instead of appending a duplicate alias. A hand-written block with the
+same alias but different host, user, port or identity is reported as a conflict
+and is not overwritten. Running the command again is idempotent; existing keys
+are reused without another reveal call.
 `~/.ssh` is created with mode `0700` when needed and the config is written with
 mode `0600`.
 
