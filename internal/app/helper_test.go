@@ -146,6 +146,10 @@ if [ "$1" = "machine" ] && [ "$2" = "add" ]; then
   printf '%s\n' "$*" >> "$HERDR_LOG"
   exit 0
 fi
+if [ "$1" = "machine" ] && [ "$2" = "remove" ]; then
+  printf '%s\n' "$*" >> "$HERDR_LOG"
+  exit 0
+fi
 exit 2
 `
 

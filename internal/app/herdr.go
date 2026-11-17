@@ -80,6 +80,29 @@ func (a *App) herdrAdd(ctx context.Context, alias, label string) error {
 	return nil
 }
 
+func (a *App) herdrRemove(ctx context.Context, profileID string) error {
+	_, stderr, err := a.runCommand(ctx, "herdr", "machine", "remove", profileID)
+	if err != nil {
+		return fmt.Errorf("herdr machine remove %s failed: %s", profileID, commandDetail(stderr, err))
+	}
+	return nil
+}
+
+func herdrRemoveArgs(profileID string) []string {
+	return []string{"machine", "remove", profileID}
+}
+
+func herdrRemoveCommandString(profileID, label string) string {
+	parts := []string{"herdr"}
+	for _, arg := range herdrRemoveArgs(profileID) {
+		parts = append(parts, shellQuote(arg))
+	}
+	if label != "" {
+		parts = append(parts, "# "+displayCell(label))
+	}
+	return strings.Join(parts, " ")
+}
+
 func herdrAddArgs(alias, label string) []string {
 	return []string{"machine", "add", alias, "--label", label, "--remote-session", "default"}
 }

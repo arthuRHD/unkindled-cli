@@ -28,19 +28,27 @@ type sshSyncItem struct {
 	Existing   bool
 }
 
+type sshPruneItem struct {
+	ID      string
+	Alias   string
+	KeyPath string
+}
+
 func (a *App) runSSHSync(ctx context.Context, args []string) int {
 	fs := flag.NewFlagSet("ssh sync", flag.ContinueOnError)
 	fs.SetOutput(a.Stderr)
 	dryRun := fs.Bool("dry-run", false, "print the diff without changing any files")
 	yes := fs.Bool("yes", false, "apply changes without confirmation")
+	prune := fs.Bool("prune", false, "remove managed SSH entries for workstations that no longer exist")
 	fs.Usage = func() {
-		fmt.Fprint(fs.Output(), `Usage: unkindled ssh sync [--dry-run] [--yes]
+		fmt.Fprint(fs.Output(), `Usage: unkindled ssh sync [--prune] [--dry-run] [--yes]
 
 Fetch connection details for every workstation, write platform-generated
 private keys to ~/.ssh/unkindled/, and add or replace managed blocks in
 ~/.ssh/config. Unrelated SSH config is preserved.
 
 Options:
+  --prune     Remove managed blocks and imported keys for deleted workstations
   --dry-run   Print the SSH config diff and key actions without changing files
   --yes       Apply changes without asking for confirmation
 `)
@@ -57,7 +65,7 @@ Options:
 	if err != nil {
 		return a.fail("could not list workstations: %s", apiErrorText(err))
 	}
-	if len(list) == 0 {
+	if len(list) == 0 && !*prune {
 		a.info("No workstations found.")
 		return 0
 	}
@@ -155,6 +163,53 @@ Options:
 		})
 	}
 
+	activeIDs := make(map[string]bool, len(plans))
+	activeKeyPaths := make(map[string]bool, len(plans))
+	for _, plan := range plans {
+		if plan.Workstation.ID != "" {
+			activeIDs[plan.Workstation.ID] = true
+		}
+		if plan.KeyPath != "" {
+			activeKeyPaths[plan.KeyPath] = true
+		}
+	}
+	var pruned []sshPruneItem
+	if *prune {
+		_, _, keyDir, keyDirErr := a.sshPaths()
+		if keyDirErr != nil {
+			return a.fail("%v", keyDirErr)
+		}
+		for _, id := range sshconf.IDs(newContent) {
+			if activeIDs[id] {
+				continue
+			}
+			block, found, findErr := sshconf.Find(newContent, id)
+			if findErr != nil {
+				a.warn("skipping stale SSH block %s: %v", id, findErr)
+				hadErrors = true
+				continue
+			}
+			if !found {
+				continue
+			}
+			updated, removed, removeErr := sshconf.Remove(newContent, id)
+			if removeErr != nil {
+				a.warn("cannot remove stale SSH block %s: %v", id, removeErr)
+				hadErrors = true
+				continue
+			}
+			if !removed {
+				continue
+			}
+			newContent = updated
+			item := sshPruneItem{ID: id, Alias: block.Alias}
+			if path, ok := managedKeyPath(block.IdentityFile, home, keyDir); ok && !activeKeyPaths[path] {
+				item.KeyPath = path
+			}
+			pruned = append(pruned, item)
+		}
+	}
+
 	configChanged := newContent != existing
 	keyActions := 0
 	for _, item := range items {
@@ -162,7 +217,7 @@ Options:
 			keyActions++
 		}
 	}
-	if len(items) == 0 {
+	if len(items) == 0 && len(pruned) == 0 {
 		a.warn("no workstations could be configured")
 		return 1
 	}
@@ -178,7 +233,7 @@ Options:
 	if configChanged {
 		diffText = diff.Unified(existing, newContent, configPath, configPath)
 	}
-	a.renderSSHChanges(items, diffText)
+	a.renderSSHChanges(items, pruned, diffText)
 
 	if *dryRun {
 		a.info("Dry run: no files changed.")
@@ -236,6 +291,15 @@ Options:
 		}
 		a.info("Updated SSH config: %s", configPath)
 	}
+	for _, item := range pruned {
+		if item.KeyPath == "" {
+			continue
+		}
+		if err := os.Remove(item.KeyPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			a.warn("could not remove stale SSH key %s: %v", item.KeyPath, err)
+			hadErrors = true
+		}
+	}
 	if revealed > 0 {
 		_, _, keyDir, _ := a.sshPaths()
 		a.info("Wrote %d private key(s) to %s.", revealed, keyDir)
@@ -264,7 +328,19 @@ func inspectKey(path string) (exists bool, mode os.FileMode, size int64, err err
 	return true, info.Mode(), info.Size(), nil
 }
 
-func (a *App) renderSSHChanges(items []sshSyncItem, diffText string) {
+func managedKeyPath(identityFile, home, keyDir string) (string, bool) {
+	path := expandHome(strings.TrimSpace(identityFile), home)
+	if path == "" || !filepath.IsAbs(path) {
+		return "", false
+	}
+	rel, err := filepath.Rel(keyDir, path)
+	if err != nil || rel == "." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || rel == ".." {
+		return "", false
+	}
+	return path, true
+}
+
+func (a *App) renderSSHChanges(items []sshSyncItem, pruned []sshPruneItem, diffText string) {
 	a.info("SSH setup changes:")
 	for _, item := range items {
 		label := planDisplayName(item.Plan.Workstation.Name, item.Plan.Workstation.ID)
@@ -278,6 +354,13 @@ func (a *App) renderSSHChanges(items []sshSyncItem, diffText string) {
 			a.info("  - %s: update SSH config block (Host %s)", label, item.Plan.Alias)
 		} else if item.Existing {
 			a.info("  - %s: equivalent SSH config block already exists (Host %s); leaving it unchanged", label, item.Plan.Alias)
+		}
+	}
+	for _, item := range pruned {
+		if item.KeyPath != "" {
+			a.info("  - remove managed SSH config block and key (Host %s)", displayCell(item.Alias))
+		} else {
+			a.info("  - remove managed SSH config block (Host %s)", displayCell(item.Alias))
 		}
 	}
 	if diffText != "" {

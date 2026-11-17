@@ -118,3 +118,65 @@ func readLog(path string) string {
 	}
 	return string(data)
 }
+
+func TestHerdrSyncPrunesStaleMachines(t *testing.T) {
+	env, logPath := herdrFixture(t)
+	list := `[{"id":"active","label":"dev box","target":"unkindled-dev-box","session":"default"},{"id":"stale","label":"old box","target":"unkindled-old-box","session":"default"},{"id":"mine","label":"personal","target":"myserver","session":"default"}]`
+	installFakeHerdr(t, env, list, logPath)
+
+	code, stdout, stderr := env.run("herdr", "sync", "--prune", "--yes")
+	if code != 0 {
+		t.Fatalf("exit = %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "Removed stale Herdr machine") {
+		t.Fatalf("unexpected output:\n%s", stdout)
+	}
+	log := readLog(logPath)
+	if !strings.Contains(log, "machine remove stale") {
+		t.Fatalf("stale machine was not removed:\n%s", log)
+	}
+	if strings.Contains(log, "machine add") {
+		t.Fatalf("active machine was re-added:\n%s", log)
+	}
+	if strings.Contains(log, "machine remove mine") {
+		t.Fatalf("unrelated machine was removed:\n%s", log)
+	}
+}
+
+func TestHerdrSyncPrunePrintDoesNotInvoke(t *testing.T) {
+	env, logPath := herdrFixture(t)
+	list := `[{"id":"active","label":"dev box","target":"unkindled-dev-box","session":"default"},{"id":"stale","label":"old box","target":"unkindled-old-box","session":"default"}]`
+	installFakeHerdr(t, env, list, logPath)
+
+	code, stdout, stderr := env.run("herdr", "sync", "--prune", "--print")
+	if code != 0 {
+		t.Fatalf("exit = %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "herdr machine remove stale") {
+		t.Fatalf("prune command missing:\n%s", stdout)
+	}
+	if log := readLog(logPath); log != "" {
+		t.Fatalf("herdr was invoked during --print:\n%s", log)
+	}
+}
+
+func TestHerdrSyncPruneWithNoWorkstations(t *testing.T) {
+	env := newTestEnv(t)
+	server := newControlPlane(t, []api.Workstation{}, map[string]api.Connection{}, testPrivateKey, nil)
+	env.saveConfig(server.URL, "test-token")
+	logPath := filepath.Join(t.TempDir(), "herdr.log")
+	list := `[{"id":"stale","label":"old box","target":"unkindled-old-box","session":"default"},{"id":"mine","label":"personal","target":"myserver","session":"default"}]`
+	installFakeHerdr(t, env, list, logPath)
+
+	code, stdout, stderr := env.run("herdr", "sync", "--prune", "--yes")
+	if code != 0 {
+		t.Fatalf("exit = %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	log := readLog(logPath)
+	if !strings.Contains(log, "machine remove stale") {
+		t.Fatalf("stale machine was not removed:\n%s", log)
+	}
+	if strings.Contains(log, "machine remove mine") {
+		t.Fatalf("unrelated machine was removed:\n%s", log)
+	}
+}

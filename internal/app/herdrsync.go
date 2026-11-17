@@ -13,12 +13,14 @@ func (a *App) runHerdrSync(ctx context.Context, args []string) int {
 	printOnly := fs.Bool("print", false, "print herdr commands without running them")
 	dryRun := fs.Bool("dry-run", false, "show what would change without changing anything")
 	yes := fs.Bool("yes", false, "apply changes without confirmation")
+	prune := fs.Bool("prune", false, "remove saved machines for workstations that no longer exist")
 	fs.Usage = func() {
-		fmt.Fprint(fs.Output(), `Usage: unkindled herdr sync [--print] [--dry-run] [--yes]
+		fmt.Fprint(fs.Output(), `Usage: unkindled herdr sync [--prune] [--print] [--dry-run] [--yes]
 
 Register each workstation with herdr using its SSH alias.
 
 Options:
+  --prune     Remove saved machines whose workstation no longer exists
   --print     Print the herdr commands instead of running them
   --dry-run   Show the commands that would run without changing anything
   --yes       Apply changes without asking for confirmation
@@ -36,7 +38,7 @@ Options:
 	if err != nil {
 		return a.fail("could not list workstations: %s", apiErrorText(err))
 	}
-	if len(list) == 0 {
+	if len(list) == 0 && !*prune {
 		a.info("No workstations found.")
 		return 0
 	}
@@ -105,12 +107,36 @@ Options:
 		pending = append(pending, pendingAdd{plan: plan, alias: plan.Alias, label: plan.Workstation.Name})
 	}
 
+	activeAliases := make(map[string]bool, len(plans))
+	for _, plan := range plans {
+		if plan.Alias != "" {
+			activeAliases[plan.Alias] = true
+		}
+	}
+	var stale []herdrMachine
+	if *prune {
+		for _, machine := range existing {
+			target := strings.TrimSpace(machine.Target)
+			// The CLI creates aliases as unkindled-<slug>. Do not touch unrelated
+			// user-created Herdr machines.
+			if !strings.HasPrefix(target, "unkindled-") || activeAliases[target] {
+				continue
+			}
+			stale = append(stale, machine)
+		}
+	}
+
 	for _, item := range pending {
 		if *printOnly || *dryRun {
 			a.info("%s", herdrCommandString(item.alias, item.label))
 		}
 	}
-	if len(pending) == 0 {
+	for _, machine := range stale {
+		if *printOnly || *dryRun {
+			a.info("%s", herdrRemoveCommandString(machine.ID, machine.Label))
+		}
+	}
+	if len(pending) == 0 && len(stale) == 0 {
 		a.info("herdr is already up to date for %d workstation(s).", len(plans))
 		if hadErrors {
 			return 1
@@ -126,9 +152,17 @@ Options:
 
 	if !*yes {
 		a.info("")
-		a.info("This will register %d workstation(s) with herdr:", len(pending))
-		for _, item := range pending {
-			a.info("  %s", herdrCommandString(item.alias, item.label))
+		if len(pending) > 0 {
+			a.info("This will register %d workstation(s) with herdr:", len(pending))
+			for _, item := range pending {
+				a.info("  %s", herdrCommandString(item.alias, item.label))
+			}
+		}
+		if len(stale) > 0 {
+			a.info("This will remove %d stale Herdr machine(s):", len(stale))
+			for _, machine := range stale {
+				a.info("  %s", herdrRemoveCommandString(machine.ID, machine.Label))
+			}
 		}
 		a.info("")
 		ok, err := a.prompt("Apply these changes?")
@@ -142,6 +176,14 @@ Options:
 	}
 
 	failed := false
+	for _, machine := range stale {
+		if err := a.herdrRemove(ctx, machine.ID); err != nil {
+			a.warn("%v", err)
+			failed = true
+			continue
+		}
+		a.info("Removed stale Herdr machine %s.", planDisplayName(machine.Label, machine.ID))
+	}
 	for _, item := range pending {
 		if err := a.herdrAdd(ctx, item.alias, item.label); err != nil {
 			a.warn("%v", err)

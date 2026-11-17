@@ -10,7 +10,7 @@ control plane, and registers your workstations with
 Requires Go 1.22 or newer.
 
 ```sh
-go install github.com/arthuRHD/unkindled-cli/cmd/unkindled@v1.3.0
+go install github.com/arthuRHD/unkindled-cli/cmd/unkindled@v1.3.1
 ```
 
 Or build from a checkout:
@@ -110,6 +110,7 @@ Templates include the built-in presets and any custom templates in the active ac
 unkindled ssh sync
 unkindled ssh sync --dry-run   # show the diff and key actions only
 unkindled ssh sync --yes       # skip the confirmation prompt
+unkindled ssh sync --prune     # remove entries for deleted workstations
 ```
 
 For every workstation, the CLI fetches
@@ -147,6 +148,11 @@ Workstation names are converted to safe file names. Names containing path
 separators or control characters are rejected, so API data cannot escape
 `~/.ssh/unkindled`.
 
+`--prune` removes managed blocks (`# unkindled:<id>`) whose workstation no
+longer exists in the account, plus managed keys under `~/.ssh/unkindled` that
+belong to those blocks. Hand-written hosts and unrelated keys are never
+touched. `--dry-run` shows the removals as part of the diff.
+
 ## Herdr sync
 
 ```sh
@@ -154,6 +160,7 @@ unkindled herdr sync
 unkindled herdr sync --print     # print commands, do not run them
 unkindled herdr sync --dry-run   # show commands that would run
 unkindled herdr sync --yes       # skip the confirmation prompt
+unkindled herdr sync --prune     # remove saved machines for deleted workstations
 ```
 
 For each workstation missing from `herdr machine list --json`, the CLI runs:
@@ -167,6 +174,12 @@ if you have not configured SSH yet.
 
 If Herdr is not installed, the CLI prints an install hint. A requested sync
 exits non-zero; `--print` and `--dry-run` remain informational and exit zero.
+
+`--prune` removes saved Herdr machines whose target starts with `unkindled-`
+and does not match an active workstation. User-created machines with other
+targets are left alone. `unkindled kill` does not modify local state, so run
+`unkindled ssh sync --prune` and `unkindled herdr sync --prune` after deleting a
+workstation to clean up its SSH block, imported key, and Herdr profile.
 
 ## Doctor
 

@@ -344,3 +344,41 @@ func TestSSHSyncUsesServerIdentityPath(t *testing.T) {
 		t.Fatalf("planned a second key instead of using the server identity path:\n%s", stdout)
 	}
 }
+
+func TestSSHSyncPrunesDeletedManagedEntries(t *testing.T) {
+	revealCalls := 0
+	env, _, _ := sshSyncFixture(t, &revealCalls)
+	activeKey := env.keyPath("dev-box")
+	env.writeFile(activeKey, []byte(testPrivateKey), 0o600)
+	staleKey := env.keyPath("old-box")
+	env.writeFile(staleKey, []byte(testPrivateKey), 0o600)
+	configText := "Host personal\n  HostName 198.51.100.7\n  User me\n\n# unkindled:ws-old\nHost old-box\n  HostName 203.0.113.50\n  User ubuntu\n  IdentityFile " + staleKey + "\n  IdentitiesOnly yes\n# end unkindled:ws-old\n"
+	env.writeFile(env.sshConfigPath(), []byte(configText), 0o600)
+
+	code, stdout, stderr := env.run("ssh", "sync", "--prune", "--yes")
+	if code != 0 {
+		t.Fatalf("exit = %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	if revealCalls != 0 {
+		t.Fatalf("sync revealed a key; calls = %d", revealCalls)
+	}
+	after := env.readFile(env.sshConfigPath())
+	if strings.Contains(after, "ws-old") || strings.Contains(after, "old-box") {
+		t.Fatalf("stale managed block was not pruned:\n%s", after)
+	}
+	if !strings.Contains(after, "unkindled:ws-1") {
+		t.Fatalf("active managed block was not written:\n%s", after)
+	}
+	if !strings.Contains(after, "Host personal") || !strings.Contains(after, "198.51.100.7") {
+		t.Fatalf("unrelated SSH config was removed:\n%s", after)
+	}
+	if _, err := os.Stat(staleKey); !os.IsNotExist(err) {
+		t.Fatalf("stale key still exists: %v", err)
+	}
+	if _, err := os.Stat(activeKey); err != nil {
+		t.Fatalf("active key was removed: %v", err)
+	}
+	if !strings.Contains(stdout, "remove managed SSH config block and key") {
+		t.Fatalf("prune output missing:\n%s", stdout)
+	}
+}
