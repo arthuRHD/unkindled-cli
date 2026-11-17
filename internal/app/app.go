@@ -24,7 +24,7 @@ import (
 )
 
 // Version is the CLI version.
-const Version = "1.2.0"
+const Version = "1.3.0"
 
 // App holds the CLI's dependencies so commands can be tested end to end.
 type App struct {
@@ -67,6 +67,14 @@ func (a *App) Run(ctx context.Context, args []string) int {
 		return a.runLogin(ctx, args[1:])
 	case "status", "workstations":
 		return a.runStatus(ctx, args[1:])
+	case "stop":
+		return a.runStop(ctx, args[1:])
+	case "kill":
+		return a.runKill(ctx, args[1:])
+	case "create":
+		return a.runCreate(ctx, args[1:])
+	case "templates":
+		return a.runTemplates(ctx, args[1:])
 	case "ssh":
 		return a.runSSH(ctx, args[1:])
 	case "herdr":
@@ -95,6 +103,10 @@ Usage:
 Commands:
   login        Sign in with GitHub device flow, or store an API token
   status       Show workstations and whether they are configured locally
+  stop         Request a graceful workstation stop
+  kill         Permanently delete a workstation and its data
+  create       Create a workstation from a template
+  templates    List available workstation templates
   ssh sync     Write SSH keys and managed ~/.ssh/config entries
   herdr sync   Register workstations with herdr
   doctor       Diagnose config, connectivity, SSH, and herdr

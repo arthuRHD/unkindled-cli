@@ -10,7 +10,7 @@ control plane, and registers your workstations with
 Requires Go 1.22 or newer.
 
 ```sh
-go install github.com/arthuRHD/unkindled-cli/cmd/unkindled@v1.2.0
+go install github.com/arthuRHD/unkindled-cli/cmd/unkindled@v1.3.0
 ```
 
 Or build from a checkout:
@@ -78,6 +78,31 @@ the local setup:
 A summary calls out workstations that still need configuration and prints the
 next command to run. If Herdr is not installed, status reports that and skips
 the Herdr checks rather than failing.
+
+## Stop and kill
+
+```sh
+unkindled stop dev-box        # graceful stop; the disk is kept
+unkindled kill dev-box        # permanent delete; asks for confirmation
+unkindled kill dev-box --yes  # no prompt
+```
+
+`stop` requests a normal stop and leaves the workstation restorable. `kill` deletes the
+workstation, its disk, public IP, SSH key, and checkpoints. It cannot be undone.
+
+## Templates and create
+
+```sh
+unkindled templates
+unkindled create --template solo-repo --name my-box
+unkindled create --template "Solo with repository" --name my-box \
+  --plan pro --ssh-key ~/.ssh/id_ed25519.pub
+```
+
+`--template` accepts a template id, name, or slug. `--plan` overrides the template plan
+(`solo`, `pro`, `studio`). `--ssh-key` reads a public key from disk; the private key never
+leaves your machine. `--repo` and `--branch` can override the template repository.
+Templates include the built-in presets and any custom templates in the active account.
 
 ## SSH sync
 

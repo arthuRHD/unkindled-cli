@@ -423,3 +423,112 @@ func decodeRevealedKey(data []byte) (string, error) {
 	}
 	return "", errors.New("SSH key response did not contain a private key")
 }
+
+// Template is a workstation template returned by the control plane.
+type Template struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Slug        string `json:"slug"`
+	Description string `json:"description"`
+	Plan        string `json:"plan"`
+	Builtin     bool   `json:"builtin"`
+}
+
+// LaunchTemplateRequest is the body for launching a workstation from a template.
+type LaunchTemplateRequest struct {
+	Name               string `json:"name,omitempty"`
+	Plan               string `json:"plan,omitempty"`
+	SSHPublicKey       string `json:"ssh_public_key,omitempty"`
+	RepositoryURL      string `json:"repository_url,omitempty"`
+	RepositoryBranch   string `json:"repository_branch,omitempty"`
+	RepositoryAuthType string `json:"repository_auth_type,omitempty"`
+}
+
+// ListTemplates returns the templates available to the signed-in user.
+func (c *Client) ListTemplates(ctx context.Context) ([]Template, error) {
+	data, err := c.do(ctx, http.MethodGet, "/v1/templates", nil)
+	if err != nil {
+		return nil, err
+	}
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 {
+		return nil, errors.New("empty response from /v1/templates")
+	}
+	if trimmed[0] == '[' {
+		var list []Template
+		if err := json.Unmarshal(trimmed, &list); err != nil {
+			return nil, fmt.Errorf("decode templates: %w", err)
+		}
+		return list, nil
+	}
+	var wrapper struct {
+		Templates []Template `json:"templates"`
+		Items     []Template `json:"items"`
+		Data      []Template `json:"data"`
+	}
+	if err := json.Unmarshal(trimmed, &wrapper); err != nil {
+		return nil, fmt.Errorf("decode templates: %w", err)
+	}
+	switch {
+	case wrapper.Templates != nil:
+		return wrapper.Templates, nil
+	case wrapper.Items != nil:
+		return wrapper.Items, nil
+	case wrapper.Data != nil:
+		return wrapper.Data, nil
+	default:
+		return nil, errors.New("unexpected response from /v1/templates: missing template list")
+	}
+}
+
+// LaunchTemplate creates a workstation from a template.
+func (c *Client) LaunchTemplate(ctx context.Context, templateID string, in LaunchTemplateRequest) (Workstation, error) {
+	path := "/v1/templates/" + url.PathEscape(templateID) + "/launch"
+	data, err := c.do(ctx, http.MethodPost, path, in)
+	if err != nil {
+		return Workstation{}, err
+	}
+	return decodeWorkstation(data)
+}
+
+func decodeWorkstation(data []byte) (Workstation, error) {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 {
+		return Workstation{}, errors.New("empty workstation response")
+	}
+	if trimmed[0] == '{' {
+		var wrapper struct {
+			Workstation *Workstation `json:"workstation"`
+			Data        *Workstation `json:"data"`
+		}
+		if err := json.Unmarshal(trimmed, &wrapper); err != nil {
+			return Workstation{}, fmt.Errorf("decode workstation: %w", err)
+		}
+		if wrapper.Workstation != nil {
+			return *wrapper.Workstation, nil
+		}
+		if wrapper.Data != nil {
+			return *wrapper.Data, nil
+		}
+		var ws Workstation
+		if err := json.Unmarshal(trimmed, &ws); err == nil && ws.ID != "" {
+			return ws, nil
+		}
+	}
+	return Workstation{}, errors.New("unexpected workstation response")
+}
+
+// StopWorkstation requests a graceful stop.
+func (c *Client) StopWorkstation(ctx context.Context, workstationID string) error {
+	path := "/v1/workstations/" + url.PathEscape(workstationID) + "/stop"
+	_, err := c.do(ctx, http.MethodPost, path, struct{}{})
+	return err
+}
+
+// KillWorkstation deletes a workstation and its disk resources. The caller must
+// explicitly confirm before using it.
+func (c *Client) KillWorkstation(ctx context.Context, workstationID string) error {
+	path := "/v1/workstations/" + url.PathEscape(workstationID) + "?confirm=true"
+	_, err := c.do(ctx, http.MethodDelete, path, nil)
+	return err
+}
